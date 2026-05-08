@@ -72,7 +72,7 @@ st.markdown("---")
 if not st.session_state.df_portfolio.empty:
     tickers = st.session_state.df_portfolio['Ticker'].tolist()
     
-    with st.spinner('Updating CMP and Industry Data...'):
+    with st.spinner('Updating Market Metrics...'):
         try:
             # Fetch data
             data = yf.download(tickers, period="1y", group_by='ticker', progress=False)
@@ -94,13 +94,10 @@ if not st.session_state.df_portfolio.empty:
                     rs = gain / loss
                     rsi = 100 - (100 / (1 + rs.iloc[-1]))
                     
-                    # Valuation
+                    # Valuation (Stock P/E only)
                     info = yf.Ticker(ticker).info
                     stock_pe = info.get('trailingPE', 'N/A')
-                    ind_pe = info.get('industryAverage', 'N/A')
-                    
                     stock_pe = round(stock_pe, 1) if isinstance(stock_pe, (int, float)) else "N/A"
-                    ind_pe = round(ind_pe, 1) if isinstance(ind_pe, (int, float)) else "N/A"
 
                     qty = float(st.session_state.df_portfolio.loc[st.session_state.df_portfolio['Ticker'] == ticker, 'Qty'].values[0])
                     row_value = qty * curr_p
@@ -110,10 +107,9 @@ if not st.session_state.df_portfolio.empty:
                         "Sl. No.": str(idx),
                         "Stock": ticker.replace(".NS", ""),
                         "Trend": "🟢 Bull" if curr_p > ema_200 else "🔴 Bear",
-                        "CMP": f"₹{curr_p:,.2f}", # Changed Header to CMP
+                        "CMP": f"₹{curr_p:,.2f}",
                         "RSI": f"{round(rsi, 1)}",
                         "Stock P/E": f"{stock_pe}",
-                        "Ind. P/E": f"{ind_pe}",
                         "Value": f"₹{int(row_value):,}"
                     })
             
@@ -122,7 +118,7 @@ if not st.session_state.df_portfolio.empty:
             with tab1:
                 total_row = {
                     "Sl. No.": "", "Stock": "GRAND TOTAL", "Trend": "", 
-                    "CMP": "", "RSI": "", "Stock P/E": "", "Ind. P/E": "", 
+                    "CMP": "", "RSI": "", "Stock P/E": "", 
                     "Value": f"₹{int(grand_total_val):,}"
                 }
                 st.table(pd.concat([pd.DataFrame(display_list), pd.DataFrame([total_row])], ignore_index=True))
