@@ -7,7 +7,7 @@ import plotly.express as px
 # 1. Page Config
 st.set_page_config(page_title="LongTerm Tracker Pro", layout="wide", page_icon="📈")
 
-# --- Custom Styling (Dark Grid + Blue Bold Totals) ---
+# --- Custom Styling ---
 st.markdown("""
     <style>
     [data-testid="stTable"] { border: 1px solid #000000 !important; margin-top: 20px; }
@@ -20,7 +20,6 @@ st.markdown("""
         border: 1px solid #000000 !important; color: #000000 !important;
         text-align: center !important; padding: 8px !important;
     }
-    /* GRAND TOTAL ROW: Blue Font + Bold */
     [data-testid="stTable"] tbody tr:last-child td {
         color: #00008B !important; font-weight: 900 !important;
         background-color: #eeeeee !important; border-top: 2px solid #000000 !important;
@@ -40,9 +39,10 @@ def load_data():
         except: pass
     return pd.DataFrame(columns=["Ticker", "Qty"])
 
-def save_data(df):
-    df.to_csv(DB_FILE, index=False)
-    return df
+def save_and_sort_data(df):
+    df_sorted = df.sort_values(by="Ticker").reset_index(drop=True)
+    df_sorted.to_csv(DB_FILE, index=False)
+    return df_sorted
 
 if 'df_portfolio' not in st.session_state:
     st.session_state.df_portfolio = load_data()
@@ -62,78 +62,133 @@ with st.expander("➕ Add New Asset", expanded=st.session_state.df_portfolio.emp
             if new_tk:
                 ticker = new_tk if new_tk.endswith(".NS") else f"{new_tk}.NS"
                 new_row = pd.DataFrame([{"Ticker": ticker, "Qty": new_qty}])
-                st.session_state.df_portfolio = pd.concat([st.session_state.df_portfolio, new_row]).drop_duplicates('Ticker', keep='last')
-                save_data(st.session_state.df_portfolio)
+                combined_df = pd.concat([st.session_state.df_portfolio, new_row]).drop_duplicates('Ticker', keep='last')
+                st.session_state.df_portfolio = save_and_sort_data(combined_df)
                 st.rerun()
 
 st.markdown("---")
 
-# 3. DATA PROCESSING
+# 3. MAIN LOGIC
 if not st.session_state.df_portfolio.empty:
     tickers = st.session_state.df_portfolio['Ticker'].tolist()
     
-    with st.spinner('Updating Market Metrics...'):
+    with st.spinner('Analyzing Market Data & Fundamentals...'):
         try:
-            # Fetch data
+            # Download Price Data for Monitor/52W
             data = yf.download(tickers, period="1y", group_by='ticker', progress=False)
             
-            display_list = []
+            monitor_list = []
+            fifty_two_list = []
+            fundamental_list = []
+            quarterly_list = []
             grand_total_val = 0.0
             
             for idx, ticker in enumerate(tickers, start=1):
                 df_t = data[ticker].dropna() if len(tickers) > 1 else data.dropna()
+                clean_name = ticker.replace(".NS", "")
                 
-                if not df_t.empty and 'Close' in df_t.columns:
+                if not df_t.empty:
+                    # 1. Price Metrics
                     curr_p = float(df_t['Close'].iloc[-1])
+                    prev_p = float(df_t['Close'].iloc[-2]) if len(df_t) > 1 else curr_p
+                    day_chg = ((curr_p - prev_p) / prev_p) * 100
+                    
+                    # 2. Techs
                     ema_200 = df_t['Close'].ewm(span=200).mean().iloc[-1]
-                    
-                    # RSI Calculation
                     delta = df_t['Close'].diff()
-                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                    rs = gain / loss
-                    rsi = 100 - (100 / (1 + rs.iloc[-1]))
+                    gain = (delta.where(delta > 0, 0)).rolling(14).mean().iloc[-1]
+                    loss = (-delta.where(delta < 0, 0)).rolling(14).mean().iloc[-1]
+                    rsi = 100 - (100 / (1 + (gain / loss))) if loss != 0 else 50
                     
-                    # Valuation (Stock P/E only)
-                    info = yf.Ticker(ticker).info
-                    stock_pe = info.get('trailingPE', 'N/A')
-                    stock_pe = round(stock_pe, 1) if isinstance(stock_pe, (int, float)) else "N/A"
-
+                    # 3. Fetch Ticker Object for Fundamentals
+                    stock_obj = yf.Ticker(ticker)
+                    info = stock_obj.info
+                    
+                    # Portfolio Calc
                     qty = float(st.session_state.df_portfolio.loc[st.session_state.df_portfolio['Ticker'] == ticker, 'Qty'].values[0])
-                    row_value = qty * curr_p
-                    grand_total_val += row_value
+                    val = qty * curr_p
+                    grand_total_val += val
                     
-                    display_list.append({
+                    # --- TAB DATA POPULATION ---
+                    
+                    # Monitor Tab
+                    monitor_list.append({
                         "Sl. No.": str(idx),
-                        "Stock": ticker.replace(".NS", ""),
-                        "Trend": "🟢 Bull" if curr_p > ema_200 else "🔴 Bear",
+                        "Stock": clean_name,
+                        "Day Change": f"{'🟢' if day_chg >= 0 else '🔴'} {day_chg:.2f}%",
                         "CMP": f"₹{curr_p:,.2f}",
-                        "RSI": f"{round(rsi, 1)}",
-                        "Stock P/E": f"{stock_pe}",
-                        "Value": f"₹{int(row_value):,}"
+                        "Trend": "🟢 Bull" if curr_p > ema_200 else "🔴 Bear",
+                        "RSI": f"{int(rsi)}",
+                        "Value": f"₹{int(val):,}"
                     })
-            
-            tab1, tab2, tab3 = st.tabs(["📊 Monitor", "📉 Allocation", "⚙️ Manage"])
-            
-            with tab1:
-                total_row = {
-                    "Sl. No.": "", "Stock": "GRAND TOTAL", "Trend": "", 
-                    "CMP": "", "RSI": "", "Stock P/E": "", 
-                    "Value": f"₹{int(grand_total_val):,}"
-                }
-                st.table(pd.concat([pd.DataFrame(display_list), pd.DataFrame([total_row])], ignore_index=True))
-
-            with tab2:
-                plot_data = [{"Ticker": d["Stock"], "Value": int(d["Value"].replace('₹','').replace(',',''))} for d in display_list]
-                st.plotly_chart(px.pie(pd.DataFrame(plot_data), values='Value', names='Ticker', hole=0.4), use_container_width=True)
-
-            with tab3:
-                new_df = st.data_editor(st.session_state.df_portfolio, use_container_width=True, hide_index=True)
-                if st.button("💾 Save Changes"):
-                    st.session_state.df_portfolio = save_data(new_df)
-                    st.rerun()
                     
+                    # Fundamental Tab
+                    mkt_cap_cr = (info.get('marketCap', 0) or 0) / 10**7
+                    fundamental_list.append({
+                        "Stock": clean_name,
+                        "Market Cap": f"₹{mkt_cap_cr:,.0f} Cr",
+                        "P/E Ratio": info.get('trailingPE', 'N/A'),
+                        "P/B Ratio": info.get('priceToBook', 'N/A'),
+                        "Debt/Equity": info.get('debtToEquity', 'N/A'),
+                        "Div. Yield": f"{info.get('dividendYield', 0)*100:.2f}%" if info.get('dividendYield') else "0.00%",
+                        "ROE": f"{info.get('returnOnEquity', 0)*100:.1f}%" if info.get('returnOnEquity') else "N/A"
+                    })
+
+                    # 52W Tab
+                    fifty_two_list.append({
+                        "Stock": clean_name,
+                        "52W High": f"₹{df_t['High'].max():,.2f}",
+                        "52W Low": f"₹{df_t['Low'].min():,.2f}",
+                        "From High": f"{((curr_p / df_t['High'].max()) - 1) * 100:.1f}%"
+                    })
+
+                    # Quarterly Tab (Simple Net Income)
+                    q_fin = stock_obj.quarterly_financials
+                    q_prof = "N/A"
+                    if not q_fin.empty and 'Net Income' in q_fin.index:
+                        q_prof = f"₹{q_fin.loc['Net Income'].iloc[0]/10**7:.1f} Cr"
+                    
+                    quarterly_list.append({
+                        "Stock": clean_name,
+                        "Quarter": q_fin.columns[0].strftime('%b %Y') if not q_fin.empty else "N/A",
+                        "Net Profit (Q)": q_prof
+                    })
+
+            # 4. TABS UI
+            tabs = st.tabs(["📊 Monitor", "🏛️ Fundamentals", "📑 Quarterly", "🏔️ 52W Range", "📉 Allocation", "⚙️ Manage"])
+            
+            with tabs[0]: # Monitor
+                st.metric("Total Portfolio Value", f"₹{grand_total_val:,.2f}")
+                total_row = {"Sl. No.": "", "Stock": "GRAND TOTAL", "Day Change": "", "CMP": "", "Trend": "", "RSI": "", "Value": f"₹{int(grand_total_val):,}"}
+                st.table(pd.concat([pd.DataFrame(monitor_list), pd.DataFrame([total_row])], ignore_index=True))
+
+            with tabs[1]: # Fundamentals
+                st.subheader("Key Fundamental Ratios")
+                st.table(pd.DataFrame(fundamental_list))
+
+            with tabs[2]: # Quarterly
+                st.table(pd.DataFrame(quarterly_list))
+
+            with tabs[3]: # 52W
+                st.table(pd.DataFrame(fifty_two_list))
+
+            with tabs[4]: # Allocation
+                plot_df = pd.DataFrame([{"T": d["Stock"], "V": int(d["Value"].replace('₹','').replace(',',''))} for d in monitor_list])
+                st.plotly_chart(px.pie(plot_df, values='V', names='T', hole=0.4), use_container_width=True)
+
+            with tabs[5]: # Manage
+                stock_to_del = st.selectbox("Select to Delete", options=tickers, index=None)
+                if st.button("Delete Selected"):
+                    if stock_to_del:
+                        st.session_state.df_portfolio = save_and_sort_data(st.session_state.df_portfolio[st.session_state.df_portfolio['Ticker'] != stock_to_del])
+                        st.rerun()
+                st.divider()
+                edited_df = st.data_editor(st.session_state.df_portfolio, use_container_width=True, num_rows="dynamic")
+                if st.button("💾 Save All Changes"):
+                    st.session_state.df_portfolio = save_and_sort_data(edited_df)
+                    st.rerun()
+
         except Exception as e:
-            st.error(f"Sync Error: {str(e)}")
+            st.error(f"Error fetching data: {e}")
 else:
-    st.info("Portfolio is empty.")
+    st.info("Your portfolio is empty.")
