@@ -7,18 +7,23 @@ import plotly.express as px
 # 1. Page Config
 st.set_page_config(page_title="LongTerm Tracker Pro", layout="wide", page_icon="📈")
 
-# --- Custom Styling (Bold Red Headers & Thin Lines) ---
+# --- Custom Styling (Bold Red Headers & Thin Dark Black Lines) ---
 st.markdown("""
     <style>
-    thead tr th {
+    /* Monitor Table Styling */
+    [data-testid="stTable"] {
+        border: 1px solid #000000 !important;
+        margin-top: 20px;
+    }
+    [data-testid="stTable"] thead tr th {
         color: #FF0000 !important;
         font-weight: bold !important;
-        text-transform: uppercase;
-        border: 0.1px solid #dee2e6 !important;
+        border: 1px solid #000000 !important;
+        background-color: #f9f9f9 !important;
     }
-    table, td {
-        border: 0.1px solid #eeeeee !important;
-        border-collapse: collapse !important;
+    [data-testid="stTable"] tbody td {
+        border: 1px solid #000000 !important;
+        color: #000000 !important;
     }
     .stMetric { background-color: #f0f2f6; padding: 10px; border-radius: 10px; }
     </style>
@@ -43,7 +48,6 @@ def save_data(df):
     df.to_csv(DB_FILE, index=False)
     return df
 
-# Initialize Session State (Fixes NameError)
 if 'df_portfolio' not in st.session_state:
     st.session_state.df_portfolio = load_data()
 
@@ -53,14 +57,14 @@ st.title("📈 Long-Term Portfolio Analytics")
 with st.expander("➕ Add New Asset", expanded=st.session_state.df_portfolio.empty):
     c1, c2, c3 = st.columns([2, 1, 1])
     with c1:
-        new_tk = st.text_input("Ticker Symbol", placeholder="e.g. BEL").upper().strip()
+        new_tk = st.text_input("Ticker Symbol", placeholder="e.g. RELIANCE").upper().strip()
     with c2:
         new_qty = st.number_input("Quantity", min_value=0.0, step=1.0, value=1.0)
     with c3:
         st.write("##")
         if st.button("Add to Portfolio", use_container_width=True):
             if new_tk:
-                # Fixed suffix logic to prevent 'Close' Sync Errors
+                # Fixes Sync Error: Ensure .NS suffix for Indian stocks
                 ticker = new_tk if new_tk.endswith(".NS") else f"{new_tk}.NS"
                 new_row = pd.DataFrame([{"Ticker": ticker, "Qty": new_qty}])
                 updated_df = pd.concat([st.session_state.df_portfolio, new_row]).drop_duplicates('Ticker', keep='last')
@@ -86,7 +90,7 @@ if not st.session_state.df_portfolio.empty:
             with tab1:
                 display_list = []
                 for ticker in tickers:
-                    # Fixes Syntax error from Line 127
+                    # Robust data extraction for single or multiple tickers
                     df_t = data[ticker].dropna() if len(tickers) > 1 else data.dropna()
                     
                     if not df_t.empty and 'Close' in df_t.columns:
